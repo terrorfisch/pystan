@@ -156,11 +156,11 @@ stan_files_all = sum(
 
 stan_math_files_all = sum(
     [[os.path.join(path.replace('pystan/', ''), fn) for fn in files]
-     for path, dirs, files in os.walk('pystan/math/')], [])
+     for path, dirs, files in os.walk('pystan/stan/lib/stan_math/')], [])
 
 lib_files_all = sum(
     [[os.path.join(path.replace('pystan/', ''), fn) for fn in files]
-     for path, dirs, files in os.walk('pystan/stan/lib/')], [])
+     for path, dirs, files in os.walk('pystan/stan/lib/stan_math/lib/')], [])
 
 package_data_pats += stan_files_all
 package_data_pats += stan_math_files_all
