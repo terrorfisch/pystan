@@ -2,8 +2,8 @@
 #define PYSTAN__PYSTAN_WRITER_HPP
 
 #include <stan/interface_callbacks/writer/csv.hpp>
-#include <stan/interface_callbacks/writer/filtered_values.hpp>
-#include <stan/interface_callbacks/writer/sum_values.hpp>
+#include "filtered_values.hpp"
+#include "sum_values.hpp"
 
 
 namespace pystan {
@@ -11,8 +11,8 @@ namespace pystan {
   class pystan_sample_writer {
   public:
     typedef stan::interface_callbacks::writer::csv CsvWriter;
-    typedef stan::interface_callbacks::writer::filtered_values<std::vector<double> > FilteredValuesWriter;
-    typedef stan::interface_callbacks::writer::sum_values SumValuesWriter;
+    typedef filtered_values<std::vector<double> > FilteredValuesWriter;
+    typedef sum_values SumValuesWriter;
 
     CsvWriter csv_;
     FilteredValuesWriter values_;
@@ -82,9 +82,9 @@ namespace pystan {
       filter_sampler_values[n] = n;
 
     stan::interface_callbacks::writer::csv csv(o, prefix);
-    stan::interface_callbacks::writer::filtered_values<std::vector<double> > values(N, M, filter);
-    stan::interface_callbacks::writer::filtered_values<std::vector<double> > sampler_values(N, M, filter_sampler_values);
-    stan::interface_callbacks::writer::sum_values sum(N, warmup);
+    filtered_values<std::vector<double> > values(N, M, filter);
+    filtered_values<std::vector<double> > sampler_values(N, M, filter_sampler_values);
+    sum_values sum(N, warmup);
 
     return pystan_sample_writer(csv, values, sampler_values, sum);
   }
