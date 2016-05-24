@@ -137,7 +137,7 @@ stanc_sources = [
     "pystan/stan/src/stan/lang/grammars/statement_grammar_inst.cpp",
     "pystan/stan/src/stan/lang/grammars/term_grammar_inst.cpp",
     "pystan/stan/src/stan/lang/grammars/var_decls_grammar_inst.cpp",
-    "pystan/stan/src/stan/lang/grammars/whitespace_grammar_inst.cpp",
+    "pystan/stan/src/stan/lang/grammars/whitespace_grammar_inst.cpp"
 ]
 
 extensions = [
