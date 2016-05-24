@@ -58,6 +58,58 @@ cdef extern from "$model_cppname.hpp" namespace "${model_cppname}_namespace":
     cdef cppclass $model_cppname:
         $model_cppname(var_context& context) except +
 
+cdef extern from "stan/services/sample/hmc_nuts_diag_e_adapt.hpp" namespace "stan::services::sample":
+    int stan_hmc_nuts_diag_e_adapt "hmc_nuts_diag_e_adapt"[Model, rng_t](Model& model,
+                                                                         long rng_seed,
+                                                                         unsigned int chain_id,
+                                                                         int num_warmup,
+                                                                         int num_samples,
+                                                                         int num_thin,
+                                                                         bool save_warmup,
+                                                                         int refresh,
+                                                                         double stepsize,
+                                                                         double stepsize_jitter,
+                                                                         int max_depth,
+                                                                         double delta,
+                                                                         double gamma,
+                                                                         double kappa,
+                                                                         double t0,
+                                                                         unsigned int init_buffer,
+                                                                         unsigned int term_buffer,
+                                                                         unsigned int window,
+                                                                         interrupt_callback interrupt
+                                                                         sample_writer_callback sample_writer
+                                                                         diagnostic_writer_callback diagnostic_writer
+                                                                         message_writer_callback message_writer) nogil:
+
+
+def hmc_nuts_diag_e_adapt(long rng_seed, unsigned int chain_id, int num_warmup, int num_samples, int num_thin, bool save_warmup,
+                          int refresh, double stepsize, double stepsize_jitter, int max_depth,
+                          double delta, double gamma, double kappa, double t0,
+                          unsigned int init_buffer, unsigned int term_buffer, unsigned int window) nogil:
+    cdef int result = stan_hmc_nuts_diag_e_adapt[$model_cppname, ecuyer1988](model,
+                                                                             rng_seed,
+                                                                             chain_id,
+                                                                             num_warmup,
+                                                                             num_samples,
+                                                                             num_thin,
+                                                                             save_warmup,
+                                                                             refresh,
+                                                                             stepsize,
+                                                                             stepsize_jitter,
+                                                                             max_depth,
+                                                                             delta,
+                                                                             gamma,
+                                                                             kappa,
+                                                                             t0,
+                                                                             init_buffer,
+                                                                             term_buffer,
+                                                                             window,
+                                                                             callbacks):
+    return result
+
+
+
 # NOTE: Methods that aren't intended for public use are prefixed by '_'. For
 # example, _update_param_oi probably shouldn't be called unless you know
 # something about the state of the C++ class instance wrapped by the class.
