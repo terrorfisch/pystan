@@ -30,6 +30,7 @@ cimport numpy as np
 
 from pystan.io cimport py_var_context, var_context
 from pystan.stan_fit cimport stan_fit, StanArgs, StanHolder, get_all_flatnames
+from pstan.interface_callbacks cimport base_writer, base_interrupt
 
 # Initialize numpy for use from C. When using numpy from C or Cython this must always be done.
 np.import_array()
@@ -77,10 +78,10 @@ cdef extern from "stan/services/sample/hmc_nuts_diag_e_adapt.hpp" namespace "sta
                                                                          unsigned int init_buffer,
                                                                          unsigned int term_buffer,
                                                                          unsigned int window,
-                                                                         interrupt_callback interrupt
-                                                                         sample_writer_callback sample_writer
-                                                                         diagnostic_writer_callback diagnostic_writer
-                                                                         message_writer_callback message_writer) nogil:
+                                                                         base_interrupt& interrupt,
+                                                                         base_writer& sample_writer
+                                                                         base_writer& diagnostic_writer
+                                                                         base_writer& message_writer) nogil:
 
 
 def hmc_nuts_diag_e_adapt(long rng_seed, unsigned int chain_id, int num_warmup, int num_samples, int num_thin, bool save_warmup,
