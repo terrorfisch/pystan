@@ -59,21 +59,21 @@
 #include <stan/optimization/newton.hpp>
 #include <stan/optimization/bfgs.hpp>
 
-#include <stan/services/io/do_print.hpp>
-#include <stan/services/io/write_error_msg.hpp>
-#include <stan/services/io/write_iteration.hpp>
-#include <stan/services/io/write_model.hpp>
-#include <stan/services/io/write_stan.hpp>
-#include <stan/services/init/initialize_state.hpp>
-#include <stan/services/mcmc/sample.hpp>
-#include <stan/services/mcmc/warmup.hpp>
-#include <stan/services/optimize/do_bfgs_optimize.hpp>
-#include <stan/services/sample/init_adapt.hpp>
-#include <stan/services/sample/init_nuts.hpp>
-#include <stan/services/sample/init_static_hmc.hpp>
-#include <stan/services/sample/init_windowed_adapt.hpp>
-#include <stan/services/sample/mcmc_writer.hpp>
-#include <stan/services/sample/progress.hpp>
+#include <stan/old_services/io/do_print.hpp>
+#include <stan/old_services/io/write_error_msg.hpp>
+#include <stan/old_services/io/write_iteration.hpp>
+#include <stan/old_services/io/write_model.hpp>
+#include <stan/old_services/io/write_stan.hpp>
+#include <stan/old_services/init/initialize_state.hpp>
+#include <stan/old_services/mcmc/sample.hpp>
+#include <stan/old_services/mcmc/warmup.hpp>
+#include <stan/old_services/optimize/do_bfgs_optimize.hpp>
+#include <stan/old_services/sample/init_adapt.hpp>
+#include <stan/old_services/sample/init_nuts.hpp>
+#include <stan/old_services/sample/init_static_hmc.hpp>
+#include <stan/old_services/sample/init_windowed_adapt.hpp>
+#include <stan/old_services/sample/progress.hpp>
+#include <stan/services/util/mcmc_writer.hpp>
 
 #include <stan/interface_callbacks/writer/noop_writer.hpp>
 #include <stan/interface_callbacks/writer/base_writer.hpp>
@@ -753,7 +753,8 @@ namespace pystan {
       return true;
     }
 
-    struct PyErr_CheckSignals_Functor {
+    struct PyErr_CheckSignals_Functor
+      : public stan::interface_callbacks::interrupt::base_interrupt {
       void operator()() {
         // PyErr_CheckSignals is defined in Python.h
         PyErr_CheckSignals();
@@ -830,15 +831,12 @@ namespace pystan {
       stan::interface_callbacks::writer::stream_writer diagnostic_writer
         = diagnostic_writer_factory(&diagnostic_stream, "# ");
       stan::interface_callbacks::writer::stream_writer message_writer(std::cout, "# ");
-      stan::services::sample::mcmc_writer<Model,
-                                          pystan_sample_writer,
-                                          stan::interface_callbacks::writer::stream_writer,
-                                          stan::interface_callbacks::writer::stream_writer>
+      stan::services::sample::mcmc_writer
         writer(sample_writer, diagnostic_writer, message_writer);
 
       if (!args.get_append_samples()) {
-        writer.write_sample_names(s, sampler_ptr, model);
-        writer.write_diagnostic_names(s, sampler_ptr, model);
+        writer.write_sample_names(s, *sampler_ptr, model);
+        writer.write_diagnostic_names(s, *sampler_ptr, model);
       }
 
       // Warm-Up
@@ -850,18 +848,17 @@ namespace pystan {
       std::string suffix = ss.str();
       PyErr_CheckSignals_Functor interruptCallback;
 
-      stan::services::mcmc::warmup<Model, RNG_t,
-                                   PyErr_CheckSignals_Functor>
-        (sampler_ptr, args.get_ctrl_sampling_warmup(), args.get_iter() - args.get_ctrl_sampling_warmup(),
+      stan::services::mcmc::warmup<Model, RNG_t>
+        (*sampler_ptr,
+         args.get_ctrl_sampling_warmup(),
+         args.get_iter() - args.get_ctrl_sampling_warmup(),
          args.get_ctrl_sampling_thin(),
-         args.get_ctrl_sampling_refresh(), args.get_ctrl_sampling_save_warmup(),
+         args.get_ctrl_sampling_refresh(),
+         args.get_ctrl_sampling_save_warmup(),
          writer,
          s,
          model,
          base_rng,
-         prefix,
-         suffix,
-         std::cout,
          interruptCallback,
          info,
          err);
@@ -872,7 +869,7 @@ namespace pystan {
       if (args.get_ctrl_sampling_adapt_engaged()) {
         ss.str("");
         dynamic_cast<stan::mcmc::base_adapter*>(sampler_ptr)->disengage_adaptation();
-        writer.write_adapt_finish(sampler_ptr);
+        writer.write_adapt_finish(*sampler_ptr);
         adaptation_info = ss.str();
         adaptation_info = adaptation_info.substr(0, adaptation_info.length()-1);
       }
@@ -880,18 +877,16 @@ namespace pystan {
       // Sampling
       start = clock();
 
-      stan::services::mcmc::sample<Model, RNG_t,
-                                   PyErr_CheckSignals_Functor>
-        (sampler_ptr, args.get_ctrl_sampling_warmup(), args.get_iter() - args.get_ctrl_sampling_warmup(),
+      stan::services::mcmc::sample<Model, RNG_t>
+        (*sampler_ptr,
+         args.get_ctrl_sampling_warmup(),
+         args.get_iter() - args.get_ctrl_sampling_warmup(),
          args.get_ctrl_sampling_thin(),
          args.get_ctrl_sampling_refresh(), true,
          writer,
          s,
          model,
          base_rng,
-         prefix,
-         suffix,
-         std::cout,
          interruptCallback,
          info,
          err);
