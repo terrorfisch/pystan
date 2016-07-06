@@ -1,6 +1,10 @@
 #ifndef PYSTAN__STAN_FIT_HPP
 #define PYSTAN__STAN_FIT_HPP
 
+#include <stan/io/empty_var_context.hpp>
+#include <stan/services/diagnose/diagnose.hpp>
+#include <stan/interface_callbacks/writer/noop_writer.hpp>
+
 #include <iomanip>
 #include <fstream>
 #include <sstream>
@@ -1740,16 +1744,6 @@ namespace pystan {
       return n;
     }
 
-    int call_sampler(StanArgs& args, StanHolder& holder) {
-      int ret;
-      ret = sampler_command(args, model_, holder, names_oi_tidx_,
-                            fnames_oi_, base_rng);
-      if (ret != 0) {
-        throw std::runtime_error("Something went wrong after call_sampler.");
-      }
-      return ret; // FIXME: rstan returns holder
-    }
-
     std::vector<std::string> param_names() const {
        return names_;
     }
@@ -1772,6 +1766,101 @@ namespace pystan {
        return fnames;
     }
 
+
+    int call_sampler(StanArgs& args, StanHolder& holder) {
+      stan::interface_callbacks::writer::stream_writer info(std::cout);
+      stan::interface_callbacks::writer::stream_writer error(std::cerr);
+      PyErr_CheckSignals_Functor interruptCallback;
+
+      stan::io::var_context* init_context_ptr;
+      double init_radius = 2;
+      std::string init_val = args.get_init();
+      if (init_val == "0") {
+        init_radius = 0;
+        init_context_ptr = new stan::io::empty_var_context();
+      } else if (init_val == "user") {
+        // FIXME -- do something with an init_context_ptr
+        init_context_ptr = new stan::io::empty_var_context();
+      } else {
+        try {
+          init_radius = boost::lexical_cast<double>(init_val);
+        } catch (const boost::bad_lexical_cast& e) {
+          init_radius = 2;
+        }
+        init_context_ptr = new stan::io::empty_var_context();
+      }
+
+      // sample_writer
+
+      int return_code = 0;
+      if (TEST_GRADIENT == args.get_method()) {
+        double epsilon = args.get_ctrl_test_grad_epsilon();
+        double error = args.get_ctrl_test_grad_error();
+        
+        // FIXME: remove these next two lines when the arguments are
+        // correctly passed to C++
+        epsilon = 1e-6;
+        error = 1e-6;
+        stan::interface_callbacks::writer::noop_writer sample_writer;
+        int num_failed
+          = stan::services::diagnose::diagnose(model_,
+                                               *init_context_ptr, 
+                                               args.get_random_seed(),
+                                               args.get_chain_id(),
+                                               init_radius,
+                                               epsilon,
+                                               error,
+                                               info,
+                                               sample_writer);
+        holder.num_failed = num_failed;
+        holder.test_grad = true;
+        // FIXME: inits need to come back out
+        //holder.inits = initv;
+        delete init_context_ptr;
+        return return_code;
+      } else if (OPTIM == args.get_method()) { // point estimation
+        std::cout << "OPTIMIZATION" << std::endl;
+        std::cout << "algo: " << args.get_ctrl_optim_algorithm() << std::endl;
+        std::cout << "algo: " << args.ctrl.optim.algorithm << std::endl;
+        std::cout << "refresh: " << args.ctrl.optim.refresh << std::endl;
+        std::cout << "init_alpha: " << args.ctrl.optim.init_alpha << std::endl;
+      } else if (SAMPLING == args.get_method()) { // point estimation
+        std::cout << "SAMPLING" << std::endl;
+        std::cout << "iter: " << args.ctrl.sampling.iter << std::endl;
+        std::cout << "warmup: " << args.ctrl.sampling.warmup << std::endl;
+        std::cout << "thin: " << args.ctrl.sampling.thin << std::endl;
+      }
+      // pystan_sample_writer sample_writer
+      //   = sample_writer_factory(&sample_stream, "# ",
+      //                             sample_writer_size,
+      //                             args.get_ctrl_sampling_iter_save(),
+      //                             args.get_ctrl_sampling_iter_save() - args.get_ctrl_sampling_iter_save_wo_warmup(),
+      //                             sample_writer_offset,
+      //                             qoi_idx);
+      
+      // args.get_method()
+      
+      
+      
+      std::cout << "------------------------------------------------------------" << std::endl;
+      std::cout << "args.get_method(): " << args.get_method() << std::endl;      
+      std::cout << "init_val: " << init_val << std::endl;
+      std::cout << "init_radius: " << init_radius << std::endl;
+      std::cout << "------------------------------------------------------------"
+                << std::endl << std::endl;
+
+      delete init_context_ptr;
+      return return_code;
+      
+      // int ret;
+      // ret = sampler_command(args, model_, holder, names_oi_tidx_,
+      //                       fnames_oi_, base_rng);
+      // if (ret != 0) {
+      //   throw std::runtime_error("Something went wrong after call_sampler.");
+      // }
+      // return ret; // FIXME: rstan returns holder
+    }
+    
   };
 }
 #endif
