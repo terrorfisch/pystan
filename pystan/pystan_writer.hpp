@@ -6,6 +6,22 @@
 
 namespace pystan {
 
+  class single_set_of_values
+    : public stan::interface_callbacks::writer::noop_writer {
+  private:
+    std::vector<double> values_;
+
+  public:
+    void operator()(const std::vector<double>& x) {
+      values_ = x;
+    }
+
+    const std::vector<double>& get_values() const {
+      return values_;
+    }
+  };
+
+  
   template <class InternalVector>
   class values
     : public stan::interface_callbacks::writer::base_writer {

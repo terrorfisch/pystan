@@ -1,6 +1,37 @@
 #ifndef PYSTAN__STAN_FIT_HPP
 #define PYSTAN__STAN_FIT_HPP
 
+#include <stan/interface_callbacks/interrupt/noop.hpp>
+#include <stan/interface_callbacks/writer/base_writer.hpp>
+#include <stan/interface_callbacks/writer/noop_writer.hpp>
+#include <stan/interface_callbacks/writer/stream_writer.hpp>
+#include <stan/io/dump.hpp>
+#include <stan/services/diagnose/diagnose.hpp>
+#include <stan/services/optimize/bfgs.hpp>
+#include <stan/services/optimize/lbfgs.hpp>
+#include <stan/services/optimize/newton.hpp>
+#include <stan/services/sample/fixed_param.hpp>
+#include <stan/services/sample/hmc_nuts_dense_e.hpp>
+#include <stan/services/sample/hmc_nuts_dense_e_adapt.hpp>
+#include <stan/services/sample/hmc_nuts_diag_e.hpp>
+#include <stan/services/sample/hmc_nuts_diag_e_adapt.hpp>
+#include <stan/services/sample/hmc_nuts_unit_e.hpp>
+#include <stan/services/sample/hmc_nuts_unit_e_adapt.hpp>
+#include <stan/services/sample/hmc_static_dense_e.hpp>
+#include <stan/services/sample/hmc_static_dense_e_adapt.hpp>
+#include <stan/services/sample/hmc_static_diag_e.hpp>
+#include <stan/services/sample/hmc_static_diag_e_adapt.hpp>
+#include <stan/services/sample/hmc_static_unit_e.hpp>
+#include <stan/services/sample/hmc_static_unit_e_adapt.hpp>
+#include <stan/services/experimental/advi/fullrank.hpp>
+#include <stan/services/experimental/advi/meanfield.hpp>
+#include <boost/date_time/posix_time/posix_time_types.hpp>
+#include <fstream>
+#include <string>
+#include <vector>
+
+
+
 #include <stan/io/empty_var_context.hpp>
 #include <stan/services/diagnose/diagnose.hpp>
 #include <stan/interface_callbacks/writer/noop_writer.hpp>
@@ -1766,69 +1797,171 @@ namespace pystan {
        return fnames;
     }
 
+    stan::io::dump get_var_context(const std::string file) {
+      std::fstream stream(file.c_str(), std::fstream::in);
+      stan::io::dump var_context(stream);
+      stream.close();
+      return var_context;
+    }
 
     int call_sampler(StanArgs& args, StanHolder& holder) {
       stan::interface_callbacks::writer::stream_writer info(std::cout);
       stan::interface_callbacks::writer::stream_writer error(std::cerr);
-      PyErr_CheckSignals_Functor interruptCallback;
 
-      stan::io::var_context* init_context_ptr;
+      pystan::single_set_of_values init_writer;
+      PyErr_CheckSignals_Functor interrupt;
+
+      std::fstream sample_stream;
+      if (args.get_sample_file_flag()) {
+        std::ios_base::openmode open_mode
+          = args.get_append_samples()
+          ? (std::fstream::out | std::fstream::app)
+          : std::fstream::out;
+        sample_stream.open(args.get_sample_file().c_str(), open_mode);
+      }
+      stan::interface_callbacks::writer::stream_writer sample_writer(sample_stream, "# ");
+      stan::interface_callbacks::writer::noop_writer diagnostic_writer;
+
       double init_radius = 2;
       std::string init_val = args.get_init();
-      if (init_val == "0") {
-        init_radius = 0;
-        init_context_ptr = new stan::io::empty_var_context();
-      } else if (init_val == "user") {
-        // FIXME -- do something with an init_context_ptr
-        init_context_ptr = new stan::io::empty_var_context();
-      } else {
-        try {
-          init_radius = boost::lexical_cast<double>(init_val);
-        } catch (const boost::bad_lexical_cast& e) {
-          init_radius = 2;
-        }
-        init_context_ptr = new stan::io::empty_var_context();
+      try {
+        init_radius = boost::lexical_cast<double>(init_val);
+        init_val = "";
+      } catch (const boost::bad_lexical_cast& e) {
       }
+      stan::io::dump init_context(get_var_context(init_val));
 
-      // sample_writer
-
+      unsigned int random_seed = args.get_random_seed();
+      unsigned int id = args.get_chain_id();
+      
       int return_code = 0;
-      if (TEST_GRADIENT == args.get_method()) {
+      if (args.get_method() == TEST_GRADIENT) {
         double epsilon = args.get_ctrl_test_grad_epsilon();
         double error = args.get_ctrl_test_grad_error();
         
-        // FIXME: remove these next two lines when the arguments are
+        // FIXME(DL): remove these next two lines when the arguments are
         // correctly passed to C++
         epsilon = 1e-6;
         error = 1e-6;
-        stan::interface_callbacks::writer::noop_writer sample_writer;
         int num_failed
           = stan::services::diagnose::diagnose(model_,
-                                               *init_context_ptr, 
-                                               args.get_random_seed(),
-                                               args.get_chain_id(),
+                                               init_context, 
+                                               random_seed,
+                                               id,
                                                init_radius,
                                                epsilon,
                                                error,
                                                info,
+                                               init_writer,
                                                sample_writer);
         holder.num_failed = num_failed;
         holder.test_grad = true;
-        // FIXME: inits need to come back out
-        //holder.inits = initv;
-        delete init_context_ptr;
+        holder.inits = init_writer.get_values();
         return return_code;
-      } else if (OPTIM == args.get_method()) { // point estimation
+      } else if (args.get_method() == OPTIM) { // point estimation
+        int refresh = args.get_ctrl_optim_refresh();
+        int num_iterations = args.get_iter();
+        bool save_iterations = args.get_ctrl_optim_save_iterations();
         std::cout << "OPTIMIZATION" << std::endl;
-        std::cout << "algo: " << args.get_ctrl_optim_algorithm() << std::endl;
-        std::cout << "algo: " << args.ctrl.optim.algorithm << std::endl;
-        std::cout << "refresh: " << args.ctrl.optim.refresh << std::endl;
-        std::cout << "init_alpha: " << args.ctrl.optim.init_alpha << std::endl;
+        std::cout << "algo:            " << args.get_ctrl_optim_algorithm() << std::endl;
+        std::cout << "refresh:         " << refresh << std::endl
+                  << "num_iterations:  " << num_iterations << std::endl
+                  << "save_iterations: " << save_iterations << std::endl;
+        pystan::single_set_of_values optimum_writer;
+        stan::interface_callbacks::writer::chained_writer
+          chained_sample_writer(sample_writer, optimum_writer);
+        if (args.get_ctrl_optim_algorithm() == Newton) {
+          return_code = stan::services::optimize::newton(model_,
+                                                         init_context,
+                                                         random_seed,
+                                                         id,
+                                                         init_radius,
+                                                         num_iterations,
+                                                         save_iterations,
+                                                         interrupt,
+                                                         info,
+                                                         init_writer,
+                                                         chained_sample_writer);
+        } else if (args.get_ctrl_optim_algorithm() == BFGS) {
+          double init_alpha = args.get_ctrl_optim_init_alpha();
+          double tol_obj = args.get_ctrl_optim_tol_obj();
+          double tol_rel_obj = args.get_ctrl_optim_tol_rel_obj();
+          double tol_grad = args.get_ctrl_optim_tol_grad();
+          double tol_rel_grad = args.get_ctrl_optim_tol_rel_grad();
+          double tol_param = args.get_ctrl_optim_tol_param();
+
+          return_code = stan::services::optimize::bfgs(model_,
+                                                       init_context,
+                                                       random_seed,
+                                                       id,
+                                                       init_radius,
+                                                       init_alpha,
+                                                       tol_obj,
+                                                       tol_rel_obj,
+                                                       tol_grad,
+                                                       tol_rel_grad,
+                                                       tol_param,
+                                                       num_iterations,
+                                                       save_iterations,
+                                                       refresh,
+                                                       interrupt,
+                                                       info,
+                                                       init_writer,
+                                                       chained_sample_writer); 
+       } else if (args.get_ctrl_optim_algorithm() == LBFGS) {
+          int history_size = args.get_ctrl_optim_history_size();
+          double init_alpha = args.get_ctrl_optim_init_alpha();
+          double tol_obj = args.get_ctrl_optim_tol_obj();
+          double tol_rel_obj = args.get_ctrl_optim_tol_rel_obj();
+          double tol_grad = args.get_ctrl_optim_tol_grad();
+          double tol_rel_grad = args.get_ctrl_optim_tol_rel_grad();
+          double tol_param = args.get_ctrl_optim_tol_param();
+
+          return_code = stan::services::optimize::lbfgs(model_,
+                                                        init_context,
+                                                        random_seed,
+                                                        id,
+                                                        init_radius,
+                                                        history_size,
+                                                        init_alpha,
+                                                        tol_obj,
+                                                        tol_rel_obj,
+                                                        tol_grad,
+                                                        tol_rel_grad,
+                                                        tol_param,
+                                                        num_iterations,
+                                                        save_iterations,
+                                                        refresh,
+                                                        interrupt,
+                                                        info,
+                                                        init_writer,
+                                                        chained_sample_writer);
+        }
+        std::vector<double> optimum = optimum_writer.get_values();
+        holder.value = optimum[0];
+        optimum.erase(optimum.begin());
+        holder.par = optimum;
+        return return_code;
       } else if (SAMPLING == args.get_method()) { // point estimation
-        std::cout << "SAMPLING" << std::endl;
-        std::cout << "iter: " << args.ctrl.sampling.iter << std::endl;
-        std::cout << "warmup: " << args.ctrl.sampling.warmup << std::endl;
-        std::cout << "thin: " << args.ctrl.sampling.thin << std::endl;
+        // std::fstream sample_stream;
+        // std::fstream diagnosic_stream;
+
+        // if (args.get_diagnostic_file_flag())
+        //   diagnostic_stream.open(args.get_diagnostic_file().c_str(), std::fstream::out);
+
+        // bool append_samples(args.get_append_samples());
+        // if (args.get_sample_file_flag()) {
+        //   std::ios_base::openmode samples_append_mode
+        //     = append_samples
+        //     ? (std::fstream::out | std::fstream::app)
+        //     : std::fstream::out;
+        //   sample_stream.open(args.get_sample_file().c_str(), samples_append_mode);
+        // }
+        
+        // std::cout << "SAMPLING" << std::endl;
+        // std::cout << "iter: " << args.ctrl.sampling.iter << std::endl;
+        // std::cout << "warmup: " << args.ctrl.sampling.warmup << std::endl;
+        // std::cout << "thin: " << args.ctrl.sampling.thin << std::endl;
       }
       // pystan_sample_writer sample_writer
       //   = sample_writer_factory(&sample_stream, "# ",
@@ -1849,7 +1982,6 @@ namespace pystan {
       std::cout << "------------------------------------------------------------"
                 << std::endl << std::endl;
 
-      delete init_context_ptr;
       return return_code;
       
       // int ret;
