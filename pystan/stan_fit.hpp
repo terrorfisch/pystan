@@ -843,7 +843,7 @@ namespace pystan {
       std::vector<std::string> sampler_diagnostic_names;
       pystan::calculate_sizes(model, s, sampler_ptr,
                              sample_writer_size,
-                             sample_writer_offset,
+                              sample_writer_offset,
                              sample_names,
                              sampler_names,
                              model_constrained_param_names,
@@ -1820,7 +1820,16 @@ namespace pystan {
         sample_stream.open(args.get_sample_file().c_str(), open_mode);
       }
       stan::interface_callbacks::writer::stream_writer sample_writer(sample_stream, "# ");
-      stan::interface_callbacks::writer::noop_writer diagnostic_writer;
+
+      std::fstream diagnostic_stream;
+      if (args.get_diagnostic_file_flag()) {
+        std::ios_base::openmode open_mode
+          = args.get_append_samples()
+          ? (std::fstream::out | std::fstream::app)
+          : std::fstream::out;
+        diagnostic_stream.open(args.get_diagnostic_file().c_str(), open_mode);
+      }
+      stan::interface_callbacks::writer::stream_writer diagnostic_writer(sample_stream, "# ");
 
       double init_radius = 2;
       std::string init_val = args.get_init();
@@ -1862,11 +1871,6 @@ namespace pystan {
         int refresh = args.get_ctrl_optim_refresh();
         int num_iterations = args.get_iter();
         bool save_iterations = args.get_ctrl_optim_save_iterations();
-        std::cout << "OPTIMIZATION" << std::endl;
-        std::cout << "algo:            " << args.get_ctrl_optim_algorithm() << std::endl;
-        std::cout << "refresh:         " << refresh << std::endl
-                  << "num_iterations:  " << num_iterations << std::endl
-                  << "save_iterations: " << save_iterations << std::endl;
         pystan::single_set_of_values optimum_writer;
         stan::interface_callbacks::writer::chained_writer
           chained_sample_writer(sample_writer, optimum_writer);
@@ -1942,48 +1946,428 @@ namespace pystan {
         optimum.erase(optimum.begin());
         holder.par = optimum;
         return return_code;
-      } else if (SAMPLING == args.get_method()) { // point estimation
-        // std::fstream sample_stream;
-        // std::fstream diagnosic_stream;
+      } else if (SAMPLING == args.get_method()) {
+        int num_warmup = args.get_ctrl_sampling_warmup();
+        int num_samples = args.get_iter() - num_warmup;
+        int num_thin = args.get_ctrl_sampling_thin();
+        bool save_warmup = args.get_ctrl_sampling_save_warmup();
+        bool adapt_engaged = args.get_ctrl_sampling_adapt_engaged();
+        int refresh = args.get_ctrl_sampling_refresh();
 
-        // if (args.get_diagnostic_file_flag())
-        //   diagnostic_stream.open(args.get_diagnostic_file().c_str(), std::fstream::out);
-
-        // bool append_samples(args.get_append_samples());
-        // if (args.get_sample_file_flag()) {
-        //   std::ios_base::openmode samples_append_mode
-        //     = append_samples
-        //     ? (std::fstream::out | std::fstream::app)
-        //     : std::fstream::out;
-        //   sample_stream.open(args.get_sample_file().c_str(), samples_append_mode);
-        // }
         
-        // std::cout << "SAMPLING" << std::endl;
-        // std::cout << "iter: " << args.ctrl.sampling.iter << std::endl;
-        // std::cout << "warmup: " << args.ctrl.sampling.warmup << std::endl;
-        // std::cout << "thin: " << args.ctrl.sampling.thin << std::endl;
-      }
-      // pystan_sample_writer sample_writer
-      //   = sample_writer_factory(&sample_stream, "# ",
-      //                             sample_writer_size,
-      //                             args.get_ctrl_sampling_iter_save(),
-      //                             args.get_ctrl_sampling_iter_save() - args.get_ctrl_sampling_iter_save_wo_warmup(),
-      //                             sample_writer_offset,
-      //                             qoi_idx);
-      
-      // args.get_method()
-      
-      
-      
-      std::cout << "------------------------------------------------------------" << std::endl;
-      std::cout << "args.get_method(): " << args.get_method() << std::endl;      
-      std::cout << "init_val: " << init_val << std::endl;
-      std::cout << "init_radius: " << init_radius << std::endl;
-      std::cout << "------------------------------------------------------------"
-                << std::endl << std::endl;
+        size_t num_values(0);
+        {
+          std::vector<std::string> param_names;
+          model_.constrained_param_names(param_names, true, true);
+          num_values = param_names.size();
+        }
+        
+        if (model_.num_params_r() == 0 && args.get_ctrl_sampling_algorithm() != Fixed_param) {
+          throw std::runtime_error("Must use algorithm=\"Fixed_param\" for model that has no parameters.");
+        } else if (args.get_ctrl_sampling_algorithm() == Fixed_param) {
+          return_code = stan::services::sample::fixed_param(model_,
+                                                            init_context,
+                                                            random_seed,
+                                                            id,
+                                                            init_radius,
+                                                            num_samples,
+                                                            num_thin,
+                                                            refresh,
+                                                            interrupt,
+                                                            info,
+                                                            error,
+                                                            init_writer,
+                                                            sample_writer,
+                                                            diagnostic_writer);
+          // holder.chains = value_writer.get_values();
+          // holder.test_grad = false;
+          // holder.args = args;
+          // holder.inits = init_writer.get_values();          
+          // holder.mean_pars = mean_pars;
+          // holder.mean_lp__ = mean_lp;
+          // holder.adaptation_info = adaptation_info;
+        } else if (args.get_ctrl_sampling_algorithm() == HMC
+                   || args.get_ctrl_sampling_algorithm() == NUTS) {
+          double stepsize = args.get_ctrl_sampling_stepsize();
+          double stepsize_jitter = args.get_ctrl_sampling_stepsize_jitter();
 
+          if (args.get_ctrl_sampling_algorithm() == NUTS
+              && args.get_ctrl_sampling_metric() == DENSE_E
+              && !args.get_ctrl_sampling_adapt_engaged())  {
+            int max_depth = args.get_ctrl_sampling_max_treedepth();
+
+            return_code = stan::services::sample::hmc_nuts_dense_e(model_,
+                                                                   init_context,
+                                                                   random_seed,
+                                                                   id,
+                                                                   init_radius,
+                                                                   num_warmup,
+                                                                   num_samples,
+                                                                   num_thin,
+                                                                   save_warmup,
+                                                                   refresh,
+                                                                   stepsize,
+                                                                   stepsize_jitter,
+                                                                   max_depth,
+                                                                   interrupt,
+                                                                   info,
+                                                                   error,
+                                                                   init_writer,
+                                                                   sample_writer,
+                                                                   diagnostic_writer);
+          } else if (args.get_ctrl_sampling_algorithm() == NUTS
+                     && args.get_ctrl_sampling_metric() == DENSE_E
+                     && args.get_ctrl_sampling_adapt_engaged())  {
+            int max_depth = args.get_ctrl_sampling_max_treedepth();
+            double delta = args.get_ctrl_sampling_adapt_delta();
+            double gamma = args.get_ctrl_sampling_adapt_gamma();
+            double kappa = args.get_ctrl_sampling_adapt_kappa();
+            double t0 = args.get_ctrl_sampling_adapt_t0();
+            unsigned int init_buffer = args.get_ctrl_sampling_adapt_init_buffer();
+            unsigned int term_buffer = args.get_ctrl_sampling_adapt_term_buffer();
+            unsigned int window = args.get_ctrl_sampling_adapt_window();
+            return_code = stan::services::sample::hmc_nuts_dense_e_adapt(model_,
+                                                                         init_context,
+                                                                         random_seed,
+                                                                         id,
+                                                                         init_radius,
+                                                                         num_warmup,
+                                                                         num_samples,
+                                                                         num_thin,
+                                                                         save_warmup,
+                                                                         refresh,
+                                                                         stepsize,
+                                                                         stepsize_jitter,
+                                                                         max_depth,
+                                                                         delta,
+                                                                         gamma,
+                                                                         kappa,
+                                                                         t0,
+                                                                         init_buffer,
+                                                                         term_buffer,
+                                                                         window,
+                                                                         interrupt,
+                                                                         info,
+                                                                         error,
+                                                                         init_writer,
+                                                                         sample_writer,
+                                                                         diagnostic_writer);
+          } else if (args.get_ctrl_sampling_algorithm() == NUTS
+                     && args.get_ctrl_sampling_metric() == DIAG_E
+                     && !args.get_ctrl_sampling_adapt_engaged())  {
+            int max_depth = args.get_ctrl_sampling_max_treedepth();
+            return_code = stan::services::sample::hmc_nuts_diag_e(model_,
+                                                                  init_context,
+                                                                  random_seed,
+                                                                  id,
+                                                                  init_radius,
+                                                                  num_warmup,
+                                                                  num_samples,
+                                                                  num_thin,
+                                                                  save_warmup,
+                                                                  refresh,
+                                                                  stepsize,
+                                                                  stepsize_jitter,
+                                                                  max_depth,
+                                                                  interrupt,
+                                                                  info,
+                                                                  error,
+                                                                  init_writer,
+                                                                  sample_writer,
+                                                                  diagnostic_writer);
+          } else if (args.get_ctrl_sampling_algorithm() == NUTS
+                     && args.get_ctrl_sampling_metric() == DIAG_E
+                     && args.get_ctrl_sampling_adapt_engaged())  {
+            int max_depth = args.get_ctrl_sampling_max_treedepth();
+            double delta = args.get_ctrl_sampling_adapt_delta();
+            double gamma = args.get_ctrl_sampling_adapt_gamma();
+            double kappa = args.get_ctrl_sampling_adapt_kappa();
+            double t0 = args.get_ctrl_sampling_adapt_t0();
+            unsigned int init_buffer = args.get_ctrl_sampling_adapt_init_buffer();
+            unsigned int term_buffer = args.get_ctrl_sampling_adapt_term_buffer();
+            unsigned int window = args.get_ctrl_sampling_adapt_window();
+            return_code = stan::services::sample::hmc_nuts_diag_e_adapt(model_,
+                                                                        init_context,
+                                                                        random_seed,
+                                                                        id,
+                                                                        init_radius,
+                                                                        num_warmup,
+                                                                        num_samples,
+                                                                        num_thin,
+                                                                        save_warmup,
+                                                                        refresh,
+                                                                        stepsize,
+                                                                        stepsize_jitter,
+                                                                        max_depth,
+                                                                        delta,
+                                                                        gamma,
+                                                                        kappa,
+                                                                        t0,
+                                                                        init_buffer,
+                                                                        term_buffer,
+                                                                        window,
+                                                                        interrupt,
+                                                                        info,
+                                                                        error,
+                                                                        init_writer,
+                                                                        sample_writer,
+                                                                        diagnostic_writer);
+          } else if (args.get_ctrl_sampling_algorithm() == NUTS
+                     && args.get_ctrl_sampling_metric() == UNIT_E
+                     && !args.get_ctrl_sampling_adapt_engaged())  {
+            int max_depth = args.get_ctrl_sampling_max_treedepth();
+            return_code = stan::services::sample::hmc_nuts_unit_e(model_,
+                                                                  init_context,
+                                                                  random_seed,
+                                                                  id,
+                                                                  init_radius,
+                                                                  num_warmup,
+                                                                  num_samples,
+                                                                  num_thin,
+                                                                  save_warmup,
+                                                                  refresh,
+                                                                  stepsize,
+                                                                  stepsize_jitter,
+                                                                  max_depth,
+                                                                  interrupt,
+                                                                  info,
+                                                                  error,
+                                                                  init_writer,
+                                                                  sample_writer,
+                                                                  diagnostic_writer);
+          } else if (args.get_ctrl_sampling_algorithm() == NUTS
+                     && args.get_ctrl_sampling_metric() == DIAG_E
+                     && args.get_ctrl_sampling_adapt_engaged())  {            
+            int max_depth = args.get_ctrl_sampling_max_treedepth();
+            double delta = args.get_ctrl_sampling_adapt_delta();
+            double gamma = args.get_ctrl_sampling_adapt_gamma();
+            double kappa = args.get_ctrl_sampling_adapt_kappa();
+            double t0 = args.get_ctrl_sampling_adapt_t0();
+            return_code = stan::services::sample::hmc_nuts_unit_e_adapt(model_,
+                                                                        init_context,
+                                                                        random_seed,
+                                                                        id,
+                                                                        init_radius,
+                                                                        num_warmup,
+                                                                        num_samples,
+                                                                        num_thin,
+                                                                        save_warmup,
+                                                                        refresh,
+                                                                        stepsize,
+                                                                        stepsize_jitter,
+                                                                        max_depth,
+                                                                        delta,
+                                                                        gamma,
+                                                                        kappa,
+                                                                        t0,
+                                                                        interrupt,
+                                                                        info,
+                                                                        error,
+                                                                        init_writer,
+                                                                        sample_writer,
+                                                                        diagnostic_writer);
+          } else if (args.get_ctrl_sampling_algorithm() == HMC
+                     && args.get_ctrl_sampling_metric() == DENSE_E
+                     && !args.get_ctrl_sampling_adapt_engaged())  {            
+            double int_time = args.get_ctrl_sampling_int_time();
+            return_code = stan::services::sample::hmc_static_dense_e(model_,
+                                                                     init_context,
+                                                                     random_seed,
+                                                                     id,
+                                                                     init_radius,
+                                                                     num_warmup,
+                                                                     num_samples,
+                                                                     num_thin,
+                                                                     save_warmup,
+                                                                     refresh,
+                                                                     stepsize,
+                                                                     stepsize_jitter,
+                                                                     int_time,
+                                                                     interrupt,
+                                                                     info,
+                                                                     error,
+                                                                     init_writer,
+                                                                     sample_writer,
+                                                                     diagnostic_writer);
+          } else if (args.get_ctrl_sampling_algorithm() == HMC
+                     && args.get_ctrl_sampling_metric() == DENSE_E
+                     && args.get_ctrl_sampling_adapt_engaged())  {            
+            double int_time = args.get_ctrl_sampling_int_time();
+            double delta = args.get_ctrl_sampling_adapt_delta();
+            double gamma = args.get_ctrl_sampling_adapt_gamma();
+            double kappa = args.get_ctrl_sampling_adapt_kappa();
+            double t0 = args.get_ctrl_sampling_adapt_t0();
+            unsigned int init_buffer = args.get_ctrl_sampling_adapt_init_buffer();
+            unsigned int term_buffer = args.get_ctrl_sampling_adapt_term_buffer();
+            unsigned int window = args.get_ctrl_sampling_adapt_window();
+            return_code = stan::services::sample::hmc_static_dense_e_adapt(model_,
+                                                                           init_context,
+                                                                           random_seed,
+                                                                           id,
+                                                                           init_radius,
+                                                                           num_warmup,
+                                                                           num_samples,
+                                                                           num_thin,
+                                                                           save_warmup,
+                                                                           refresh,
+                                                                           stepsize,
+                                                                           stepsize_jitter,
+                                                                           int_time,
+                                                                           delta,
+                                                                           gamma,
+                                                                           kappa,
+                                                                           t0,
+                                                                           init_buffer,
+                                                                           term_buffer,
+                                                                           window,
+                                                                           interrupt,
+                                                                           info,
+                                                                           error,
+                                                                           init_writer,
+                                                                           sample_writer,
+                                                                           diagnostic_writer);
+          } else if (args.get_ctrl_sampling_algorithm() == HMC
+                     && args.get_ctrl_sampling_metric() == DIAG_E
+                     && !args.get_ctrl_sampling_adapt_engaged())  {
+            double int_time = args.get_ctrl_sampling_int_time();
+            return_code = stan::services::sample::hmc_static_diag_e(model_,
+                                                                    init_context,
+                                                                    random_seed,
+                                                                    id,
+                                                                    init_radius,
+                                                                    num_warmup,
+                                                                    num_samples,
+                                                                    num_thin,
+                                                                    save_warmup,
+                                                                    refresh,
+                                                                    stepsize,
+                                                                    stepsize_jitter,
+                                                                    int_time,
+                                                                    interrupt,
+                                                                    info,
+                                                                    error,
+                                                                    init_writer,
+                                                                    sample_writer,
+                                                                    diagnostic_writer);
+          } else if (args.get_ctrl_sampling_algorithm() == HMC
+                     && args.get_ctrl_sampling_metric() == DIAG_E
+                     && args.get_ctrl_sampling_adapt_engaged())  {
+            double int_time = args.get_ctrl_sampling_int_time();
+            double delta = args.get_ctrl_sampling_adapt_delta();
+            double gamma = args.get_ctrl_sampling_adapt_gamma();
+            double kappa = args.get_ctrl_sampling_adapt_kappa();
+            double t0 = args.get_ctrl_sampling_adapt_t0();
+            unsigned int init_buffer = args.get_ctrl_sampling_adapt_init_buffer();
+            unsigned int term_buffer = args.get_ctrl_sampling_adapt_term_buffer();
+            unsigned int window = args.get_ctrl_sampling_adapt_window();
+            return_code = stan::services::sample::hmc_static_diag_e_adapt(model_,
+                                                                          init_context,
+                                                                          random_seed,
+                                                                          id,
+                                                                          init_radius,
+                                                                          num_warmup,
+                                                                          num_samples,
+                                                                          num_thin,
+                                                                          save_warmup,
+                                                                          refresh,
+                                                                          stepsize,
+                                                                          stepsize_jitter,
+                                                                          int_time,
+                                                                          delta,
+                                                                          gamma,
+                                                                          kappa,
+                                                                          t0,
+                                                                          init_buffer,
+                                                                          term_buffer,
+                                                                          window,
+                                                                          interrupt,
+                                                                          info,
+                                                                          error,
+                                                                          init_writer,
+                                                                          sample_writer,
+                                                                          diagnostic_writer);
+          } else if (args.get_ctrl_sampling_algorithm() == HMC
+                     && args.get_ctrl_sampling_metric() == UNIT_E
+                     && !args.get_ctrl_sampling_adapt_engaged())  {
+            double int_time = args.get_ctrl_sampling_int_time();
+            return_code = stan::services::sample::hmc_static_unit_e(model_,
+                                                                    init_context,
+                                                                    random_seed,
+                                                                    id,
+                                                                    init_radius,
+                                                                    num_warmup,
+                                                                    num_samples,
+                                                                    num_thin,
+                                                                    save_warmup,
+                                                                    refresh,
+                                                                    stepsize,
+                                                                    stepsize_jitter,
+                                                                    int_time,
+                                                                    interrupt,
+                                                                    info,
+                                                                    error,
+                                                                    init_writer,
+                                                                    sample_writer,
+                                                                    diagnostic_writer);
+          } else if (args.get_ctrl_sampling_algorithm() == HMC
+                     && args.get_ctrl_sampling_metric() == UNIT_E
+                     && args.get_ctrl_sampling_adapt_engaged())  {
+            double int_time = args.get_ctrl_sampling_int_time();
+            double delta = args.get_ctrl_sampling_adapt_delta();
+            double gamma = args.get_ctrl_sampling_adapt_gamma();
+            double kappa = args.get_ctrl_sampling_adapt_kappa();
+            double t0 = args.get_ctrl_sampling_adapt_t0();
+            return_code = stan::services::sample::hmc_static_unit_e_adapt(model_,
+                                                                          init_context,
+                                                                          random_seed,
+                                                                          id,
+                                                                          init_radius,
+                                                                          num_warmup,
+                                                                          num_samples,
+                                                                          num_thin,
+                                                                          save_warmup,
+                                                                          refresh,
+                                                                          stepsize,
+                                                                          stepsize_jitter,
+                                                                          int_time,
+                                                                          delta,
+                                                                          gamma,
+                                                                          kappa,
+                                                                          t0,
+                                                                          interrupt,
+                                                                          info,
+                                                                          error,
+                                                                          init_writer,
+                                                                          sample_writer,
+                                                                          diagnostic_writer);
+          }
+          // holder.chains = value_writer.get_values();
+          // holder.test_grad = false;
+          // holder.args = args;
+          // holder.inits = init_writer.get_values();
+          // holder.sampler_params = value_writer.get_sampler_values();
+          // holder.sampler_param_names = value_writer.get_sampler_names();
+          // holder.chain_names = value_writer.get_names();
+          
+          // holder.mean_pars = std::vector<double>(num_values, 0);
+          // holder.mean_lp__ = 0;
+          // for (size_t m = args.get_ctrl_sampling_warmup();
+          //        m < args.get_ctrl_sampling_iter_save();
+          //      m++) {
+          //   for (size_t n = 0; n < num_values; n++)
+          //     holder.mean_pars[n] += holder.chains[n][m];
+          //   holder.mean_lp__ += holder.sampler_params[0][m];
+          // }
+          // for (size_t n = 0; n < num_values; n++)
+          //   holder.mean_pars[n] /= args.get_ctrl_sampling_iter_save_wo_warmup();
+          // holder.mean_lp__ /= args.get_ctrl_sampling_iter_save_wo_warmup();
+          // //holder.adaptation_info = adaptation_info;
+          // holder.adaptation_info = "";
+        }
+      }
       return return_code;
-      
+
+      // OLD CODE
       // int ret;
       // ret = sampler_command(args, model_, holder, names_oi_tidx_,
       //                       fnames_oi_, base_rng);
