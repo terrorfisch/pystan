@@ -1,5 +1,6 @@
 import os
 import unittest
+import tempfile
 
 
 import pystan
@@ -8,6 +9,21 @@ import pystan
 class TestNormalVB(unittest.TestCase):
 
     seed = 1
+
+    def setUp(self):
+        self.temp_files = []
+
+    def tearDown(self):
+        """This cleanup is required on windows."""
+        for file_name in self.temp_files:
+            try:
+                os.remove(file_name)
+            except OSError:
+                pass
+
+    def get_temp_file_name(self, *args, **kwargs):
+        self.temp_files.append(tempfile.mktemp(*args, **kwargs))
+        return self.temp_files[-1]
 
     @classmethod
     def setUpClass(cls):
@@ -34,15 +50,15 @@ class TestNormalVB(unittest.TestCase):
         self.assertIsNotNone(vbf)
 
     def test_vb_sample_file(self):
-        sample_file = '/tmp/vb-results.csv'
+        sample_file = self.get_temp_file_name('vb-results.csv')
         vbf = self.model.vb(algorithm='fullrank', sample_file=sample_file, seed=self.seed)
         self.assertIsNotNone(vbf)
         self.assertEqual(vbf['args']['sample_file'].decode('utf-8'), sample_file)
         self.assertTrue(os.path.exists(sample_file))
 
     def test_vb_diagnostic_file(self):
-        sample_file = '/tmp/vb-results.csv'
-        diag_file = '/tmp/vb-diag.csv'
+        sample_file = self.get_temp_file_name('vb-results.csv')
+        diag_file = self.get_temp_file_name('vb-diag.csv')
         vbf = self.model.vb(algorithm='fullrank', sample_file=sample_file, diagnostic_file=diag_file, seed=self.seed)
         self.assertIsNotNone(vbf)
         self.assertEqual(vbf['args']['diagnostic_file'].decode('utf-8'), diag_file)
