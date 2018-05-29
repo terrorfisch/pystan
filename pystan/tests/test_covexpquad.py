@@ -18,9 +18,6 @@ class TestCovExpQuad(unittest.TestCase):
     }
         """
 
-    model = StanModel(model_code=covexpquad)
-
     def test_8schools_pars(self):
-        model = self.model
+        model = StanModel(model_code=self.covexpquad)
         self.assertIsNotNone(model)
- 
